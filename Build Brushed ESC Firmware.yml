@@ -1,0 +1,83 @@
+name: Build Brushed ESC Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      mcu_target:
+        description: 'MCU Target'
+        required: true
+        type: choice
+        options:
+          - F051
+          - F415
+          - F421
+          - G071
+          - L431
+          - E230
+      esc_model:
+        description: 'ESC Model (optional)'
+        required: false
+        type: string
+        default: 'Generic'
+
+jobs:
+  build-brushed:
+    name: Build Brushed ESC - ${{ github.event.inputs.mcu_target }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-arm-none-eabi \
+            binutils-arm-none-eabi \
+            arm-none-eabi-newlib \
+            make
+
+      - name: Get version
+        id: version
+        run: |
+          MAJOR=$(grep "define VERSION_MAJOR" Inc/version.h | awk '{print $3}')
+          MINOR=$(grep "define VERSION_MINOR" Inc/version.h | awk '{print $3}')
+          echo "version=${MAJOR}.${MINOR}" >> $GITHUB_OUTPUT
+
+      - name: Build Brushed ESC Firmware
+        run: |
+          make clean
+          make ${{ github.event.inputs.mcu_target }}
+        env:
+          SHELL: /bin/bash
+
+      - name: Generate firmware info
+        id: firmware_info
+        run: |
+          BIN_FILE=$(find obj -name "*${{ github.event.inputs.mcu_target }}_*.bin" -type f | head -1)
+          if [ -n "$BIN_FILE" ]; then
+            SIZE=$(stat -f%z "$BIN_FILE" 2>/dev/null || stat -c%s "$BIN_FILE")
+            echo "bin_file=$BIN_FILE" >> $GITHUB_OUTPUT
+            echo "size=$SIZE" >> $GITHUB_OUTPUT
+            echo "Build successful: $BIN_FILE (Size: $SIZE bytes)"
+          else
+            echo "Error: No binary file found"
+            exit 1
+          fi
+
+      - name: Upload Brushed ESC Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: brushed-esc-${{ github.event.inputs.mcu_target }}-${{ github.event.inputs.esc_model }}-${{ steps.version.outputs.version }}
+          path: obj/
+          retention-days: 7
+
+      - name: Create build summary
+        run: |
+          echo "## Brushed ESC Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **MCU Target**: ${{ github.event.inputs.mcu_target }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **ESC Model**: ${{ github.event.inputs.esc_model }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Firmware Size**: ${{ steps.firmware_info.outputs.size }} bytes" >> $GITHUB_STEP_SUMMARY
